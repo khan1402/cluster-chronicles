@@ -1,0 +1,10 @@
+.vagrant/
+keys/
+*.retry
+*.log
+__pycache__/
+.DS_Store
+.vault_pass
+reports/
+
+answers.md
