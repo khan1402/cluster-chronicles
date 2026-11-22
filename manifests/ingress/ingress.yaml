@@ -1,0 +1,30 @@
+# ingress.yaml - external access to the cluster (the "front door").
+#
+# Browser -> VM port 80 -> ingress-nginx controller -> frontend Service -> frontend pod
+#
+# The app rule has NO hostname, so it answers on the plain IP:
+#   http://192.168.0.122/
+# Jenkins, Grafana and Kibana get their own hostnames in Groups 2 and 3.
+#
+# An Ingress can only point to Services in its OWN namespace, so each part of
+# the system gets its own Ingress object below, in its own namespace.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: app
+  namespace: app
+  labels:
+    app.kubernetes.io/name: frontend
+    app.kubernetes.io/part-of: cluster-chronicles
+spec:
+  ingressClassName: nginx            # handled by Minikube's ingress addon
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  name: http

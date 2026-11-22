@@ -1,0 +1,18 @@
+# configmap.yaml - non-secret settings for the frontend.
+#
+# The image stays the same everywhere; only this file changes per environment.
+# The Deployment loads every key below as an environment variable.
+#
+# NOTE: pods read these values when they START. After changing this file:
+#   kubectl rollout restart deployment/frontend -n app
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-config
+  namespace: app
+  labels:
+    app.kubernetes.io/name: frontend
+    app.kubernetes.io/part-of: cluster-chronicles
+data:
+  # The backend Service's name. Short form works because both are in "app".
+  BACKEND_URL: "http://backend:3000"

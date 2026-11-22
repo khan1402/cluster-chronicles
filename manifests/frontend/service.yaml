@@ -1,0 +1,24 @@
+# service.yaml - one address for ALL frontend pods = the load balancing.
+#
+# Every request to this Service goes to one of the READY frontend pods
+# (kube-proxy spreads them). Pods that fail their readiness probe are taken
+# out of the list automatically.
+#
+# Port 80 here -> port 8080 in the pod (the app runs as non-root on 8080).
+# ClusterIP: outside traffic arrives through the Ingress, not directly.
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: app
+  labels:
+    app.kubernetes.io/name: frontend
+    app.kubernetes.io/part-of: cluster-chronicles
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

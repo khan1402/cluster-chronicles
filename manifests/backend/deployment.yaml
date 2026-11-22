@@ -1,0 +1,91 @@
+# deployment.yaml - the backend API: 1 replica.
+#
+# A Deployment keeps the requested number of pods running. If the pod dies,
+# Kubernetes starts a new one from the same template.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: app
+  labels:
+    app.kubernetes.io/name: backend
+    app.kubernetes.io/part-of: cluster-chronicles
+spec:
+  replicas: 1
+  revisionHistoryLimit: 5          # old versions kept for "kubectl rollout undo"
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: backend
+  # Rolling update: start the NEW pod first (maxSurge 1), remove the old one only
+  # when the new one is ready (maxUnavailable 0) -> no downtime, even with 1 replica.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: backend
+        app.kubernetes.io/part-of: cluster-chronicles
+    spec:
+      # The app never talks to the Kubernetes API, so it gets no API token.
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001             # the user created in the Dockerfile
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault       # blocks unusual Linux system calls
+      containers:
+        - name: backend
+          image: zeek14/chronicles-backend:initial
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          # requests = guaranteed share (used by the scheduler to pick a node)
+          # limits   = hard maximum. Over the CPU limit -> slowed down.
+          #            Over the memory limit -> container killed (OOMKilled) and restarted.
+          resources:
+            requests:
+              cpu: 100m              # 0.1 CPU core
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          # startup  : give the app up to 60 s to boot before the other probes start
+          # readiness: only send traffic when /health answers
+          # liveness : restart the container if /health stops answering
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          # The only writable folder (the rest of the filesystem is read-only)
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

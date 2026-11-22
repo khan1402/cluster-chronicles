@@ -1,0 +1,16 @@
+# storageclass.yaml - the class for persistent volumes created BY HAND.
+#
+# no-provisioner       : Kubernetes never creates disks for this class on its own;
+#                        only the PVs in persistent-volumes.yaml exist
+# WaitForFirstConsumer : a claim (PVC) is bound only when a pod that uses it is
+#                        scheduled, so the volume and the pod end up together
+# Retain               : deleting a claim does NOT delete the data
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: manual
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Retain

@@ -1,0 +1,24 @@
+# service.yaml - a stable name and IP for the backend pods.
+#
+# Pods get a new IP every time they restart. The Service gives them one fixed
+# name: other pods call http://backend:3000 (same namespace) or
+# http://backend.app.svc.cluster.local:3000 (from anywhere in the cluster).
+#
+# ClusterIP = reachable ONLY inside the cluster. The backend is never exposed
+# to the outside world; only the frontend calls it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: app
+  labels:
+    app.kubernetes.io/name: backend
+    app.kubernetes.io/part-of: cluster-chronicles
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: backend   # sends traffic to pods with this label
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http                 # the container port named "http"

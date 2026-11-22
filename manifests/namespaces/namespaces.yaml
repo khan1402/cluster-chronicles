@@ -1,0 +1,49 @@
+# namespaces.yaml - one namespace per part of the system.
+#
+# Each namespace also gets a Pod Security level. Kubernetes REJECTS any pod
+# that breaks the "enforce" level, and prints a warning for the "warn" level.
+#   restricted - strictest: non-root, no capabilities, no privilege escalation
+#   baseline   - blocks the dangerous things (host network, host files, privileged)
+#   privileged - no limits (needed by agents that read the node itself)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: app
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+---
+# Jenkins + build pods. Kaniko must run as root to build images, so
+# "restricted" is impossible here; "baseline" still blocks host access.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cicd
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted
+---
+# Prometheus, Grafana, Alertmanager. node-exporter reads the node's own
+# /proc and /sys and uses the host network, which needs "privileged".
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/warn: baseline
+---
+# Elasticsearch, Kibana, Fluent Bit. Fluent Bit reads log files straight
+# from the node (hostPath), which needs "privileged".
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: logging
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/warn: baseline

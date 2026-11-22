@@ -1,0 +1,101 @@
+# persistent-volumes.yaml - pieces of disk for the components that must keep data.
+#
+# PVs are cluster-wide (no namespace). The claims (PVCs) that use them are
+# created in Groups 2 and 3, and find "their" PV through the label
+# storage.cluster-chronicles/for.
+#
+# hostPath = a folder on the Minikube node. Minikube keeps /data across
+# restarts. hostPath is fine for a 1-node cluster; in production the disk
+# would come from a network storage system, so a pod could move to another node.
+#
+# NOTE: with hostPath, "capacity" is only used to match PVs to claims - it does
+# NOT limit how much is written. The real limits are the retention settings in
+# Prometheus and Elasticsearch (Group 3).
+#
+# ReadWriteOnce: each volume is mounted read-write by ONE node. Every one of
+# these components writes to its own volume, so nothing needs to share.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: jenkins-home
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+    storage.cluster-chronicles/for: jenkins
+spec:
+  storageClassName: manual
+  capacity:
+    storage: 5Gi
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: /data/jenkins
+    type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: prometheus-data
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+    storage.cluster-chronicles/for: prometheus
+spec:
+  storageClassName: manual
+  capacity:
+    storage: 5Gi
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: /data/prometheus
+    type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: grafana-data
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+    storage.cluster-chronicles/for: grafana
+spec:
+  storageClassName: manual
+  capacity:
+    storage: 1Gi
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: /data/grafana
+    type: DirectoryOrCreate
+---
+# Two Elasticsearch nodes = two separate volumes (each node stores its own copy).
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: elasticsearch-data-0
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+    storage.cluster-chronicles/for: elasticsearch
+spec:
+  storageClassName: manual
+  capacity:
+    storage: 4Gi
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: /data/elasticsearch-0
+    type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: elasticsearch-data-1
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+    storage.cluster-chronicles/for: elasticsearch
+spec:
+  storageClassName: manual
+  capacity:
+    storage: 4Gi
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: /data/elasticsearch-1
+    type: DirectoryOrCreate

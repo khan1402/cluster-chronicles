@@ -1,10 +1,18 @@
-.vagrant/
-keys/
-*.retry
-*.log
+# Python
 __pycache__/
-.DS_Store
-.vault_pass
+*.pyc
 reports/
+
+# Kubernetes access - a kubeconfig is a full key to the cluster, never commit it
+kubeconfig
+*.kubeconfig
+
+# Real secret values - only secrets.env.example is committed
+security/secrets/secrets.env
+.env
+
+# Editor / OS
+.DS_Store
+*.log
 
 answers.md
