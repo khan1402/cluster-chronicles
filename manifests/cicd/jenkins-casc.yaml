@@ -4,9 +4,11 @@
 # casc.yaml   : read by the Configuration-as-Code plugin on EVERY start.
 #               Changes made by clicking in the UI are overwritten on restart.
 #
-# ${NAME} values are filled in at startup from files in /run/secrets (the
-# "jenkins-secrets" Secret mounted as a volume) or from environment variables.
-# No password or token is written in this file.
+# Secrets are never written in this file:
+#   ${JENKINS_ADMIN_PASSWORD}        - from an environment variable (secretKeyRef)
+#   ${readFile:/var/jenkins_secrets/...} - read at startup from files in
+#                                      /var/jenkins_secrets (the "jenkins-secrets"
+#                                      Secret mounted as a volume)
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -66,18 +68,18 @@ data:
       system:
         domainCredentials:
           - credentials:
-              # From files in /run/secrets (Secret mounted as a volume)
+              # From files in /var/jenkins_secrets (Secret mounted as a volume)
               - usernamePassword:
                   scope: GLOBAL
                   id: "gitea"
                   description: "Gitea - read the repository"
-                  username: "${GITEA_USERNAME}"
-                  password: "${GITEA_TOKEN}"
+                  username: "${readFile:/var/jenkins_secrets/GITEA_USERNAME}"
+                  password: "${readFile:/var/jenkins_secrets/GITEA_TOKEN}"
               - string:
                   scope: GLOBAL
                   id: "slack-webhook"
                   description: "Slack incoming webhook - pipeline results"
-                  secret: "${SLACK_WEBHOOK_URL}"
+                  secret: "${readFile:/var/jenkins_secrets/SLACK_WEBHOOK_URL}"
 
     # The job itself (Job DSL). Its steps live in the Jenkinsfile in Git.
     jobs:

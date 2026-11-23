@@ -132,9 +132,12 @@ spec:
               readOnly: true
             - name: plugins
               mountPath: /usr/share/jenkins/ref/plugins
-            # Secret as FILES: /run/secrets/GITEA_TOKEN etc. (used by casc.yaml)
+            # Secret as FILES: /var/jenkins_secrets/GITEA_TOKEN etc.
+            # casc.yaml reads them with ${readFile:/var/jenkins_secrets/...}.
+            # NOT /run/secrets: Kubernetes mounts the ServiceAccount token at
+            # /var/run/secrets/..., and /var/run is a link to /run in this image.
             - name: jenkins-secrets
-              mountPath: /run/secrets
+              mountPath: /var/jenkins_secrets
               readOnly: true
 
       volumes:
