@@ -1,0 +1,111 @@
+# jenkins-casc.yaml - Jenkins configured fully as code (ConfigMap).
+#
+# plugins.txt : installed by the "install-plugins" init container
+# casc.yaml   : read by the Configuration-as-Code plugin on EVERY start.
+#               Changes made by clicking in the UI are overwritten on restart.
+#
+# ${NAME} values are filled in at startup from files in /run/secrets (the
+# "jenkins-secrets" Secret mounted as a volume) or from environment variables.
+# No password or token is written in this file.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jenkins-casc
+  namespace: cicd
+  labels:
+    app.kubernetes.io/name: jenkins
+    app.kubernetes.io/part-of: cluster-chronicles
+data:
+  plugins.txt: |
+    # Dependencies are resolved and downloaded automatically.
+    kubernetes
+    workflow-aggregator
+    git
+    configuration-as-code
+    job-dsl
+    credentials-binding
+    plain-credentials
+    timestamper
+    ansicolor
+    junit
+    pipeline-graph-view
+
+  casc.yaml: |
+    jenkins:
+      systemMessage: "cluster-chronicles CI/CD - configured as code (JCasC). UI changes are overwritten on restart."
+      # The controller runs NO builds itself: every build gets its own pod.
+      numExecutors: 0
+      mode: EXCLUSIVE
+      securityRealm:
+        local:
+          allowsSignup: false
+          users:
+            - id: "admin"
+              name: "Administrator"
+              # From an environment variable (secretKeyRef in statefulset.yaml)
+              password: "${JENKINS_ADMIN_PASSWORD}"
+      authorizationStrategy:
+        loggedInUsersCanDoAnything:
+          allowAnonymousRead: false
+      # Build pods are started in "cicd" with the controller's ServiceAccount
+      # (no serverUrl = use the in-cluster API and token). Agents connect back
+      # over WebSocket on the normal HTTP port - no extra agent port needed.
+      clouds:
+        - kubernetes:
+            name: "kubernetes"
+            namespace: "cicd"
+            jenkinsUrl: "http://jenkins.cicd.svc.cluster.local:8080"
+            webSocket: true
+            containerCapStr: "2"
+
+    unclassified:
+      location:
+        url: "http://jenkins.192.168.0.122.nip.io/"
+
+    credentials:
+      system:
+        domainCredentials:
+          - credentials:
+              # From files in /run/secrets (Secret mounted as a volume)
+              - usernamePassword:
+                  scope: GLOBAL
+                  id: "gitea"
+                  description: "Gitea - read the repository"
+                  username: "${GITEA_USERNAME}"
+                  password: "${GITEA_TOKEN}"
+              - string:
+                  scope: GLOBAL
+                  id: "slack-webhook"
+                  description: "Slack incoming webhook - pipeline results"
+                  secret: "${SLACK_WEBHOOK_URL}"
+
+    # The job itself (Job DSL). Its steps live in the Jenkinsfile in Git.
+    jobs:
+      - script: |
+          pipelineJob('cluster-chronicles') {
+            description('Tests, builds (Kaniko), scans (Trivy) and deploys the app to Kubernetes. Checks Gitea for new commits every minute.')
+            properties {
+              pipelineTriggers {
+                triggers {
+                  pollSCM {
+                    scmpoll_spec('* * * * *')
+                  }
+                }
+              }
+            }
+            definition {
+              cpsScm {
+                scm {
+                  git {
+                    remote {
+                      url('https://gitea.kood.tech/zeeshankhan/cluster-chronicles.git')
+                      credentials('gitea')
+                    }
+                    branch('*/main')
+                  }
+                }
+                scriptPath('Jenkinsfile')
+                lightweight(true)
+              }
+            }
+          }

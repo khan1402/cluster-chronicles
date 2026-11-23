@@ -1,0 +1,87 @@
+# rbac.yaml - what each Jenkins identity is allowed to do.
+#
+# Role        = a list of allowed actions (verbs) on resources, in ONE namespace
+# RoleBinding = gives a Role to an identity (here: a ServiceAccount)
+# Anything not listed is denied.
+#
+# Check it any time:
+#   kubectl auth can-i patch deployments -n app --as=system:serviceaccount:cicd:jenkins-deployer   # yes
+#   kubectl auth can-i delete deployments -n app --as=system:serviceaccount:cicd:jenkins-deployer  # no
+#   kubectl auth can-i get secrets -n app --as=system:serviceaccount:cicd:jenkins-deployer         # no
+
+# --- 1. Jenkins controller: run build pods in "cicd" -----------------------------
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: jenkins-agents
+  namespace: cicd
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create", "delete", "get", "list", "watch", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]           # runs each "sh" step inside a container
+    verbs: ["create", "get"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]              # shows why a build pod failed to start
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: jenkins-agents
+  namespace: cicd
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: jenkins-agents
+subjects:
+  - kind: ServiceAccount
+    name: jenkins
+    namespace: cicd
+---
+# --- 2. Build pods: deploy new versions in "app" -------------------------------------
+# Enough for: kubectl set image, kubectl annotate, kubectl rollout status.
+# NOT allowed: deleting anything, reading Secrets, touching other namespaces.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: app-deployer
+  namespace: app
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]         # rollout status follows the new ReplicaSet
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+# The binding lives in "app" but its subject is in "cicd": a cross-namespace
+# grant, limited to this one namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: app-deployer
+  namespace: app
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: app-deployer
+subjects:
+  - kind: ServiceAccount
+    name: jenkins-deployer
+    namespace: cicd

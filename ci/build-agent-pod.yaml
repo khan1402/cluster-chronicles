@@ -1,0 +1,118 @@
+# build-agent-pod.yaml - template for ONE build pod (used by the Jenkinsfile).
+#
+# Jenkins creates a fresh pod from this for every build and deletes it after.
+# Each container is one tool; Jenkins runs each step in the container named
+# by container('...') in the Jenkinsfile. They share the workspace (the
+# checked-out repo), which the Kubernetes plugin adds automatically.
+#
+# "command: cat" + "tty: true" keeps a container idle, waiting for steps.
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app.kubernetes.io/name: jenkins-agent
+    app.kubernetes.io/part-of: cluster-chronicles
+spec:
+  serviceAccountName: jenkins-deployer      # may update the app (rbac.yaml)
+  enableServiceLinks: false
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    # Jenkins' own agent process (image filled in by the Kubernetes plugin).
+    # Also does the git checkout.
+    - name: jnlp
+      resources:
+        requests: { cpu: 100m, memory: 256Mi }
+        limits: { cpu: "1", memory: 512Mi }
+
+    # kubectl, bash, curl, python3: deploy, smoke test, Slack.
+    # Tools are installed at the start of the build (Jenkinsfile, Version stage).
+    - name: tools
+      image: alpine:3.22
+      command: ["cat"]
+      tty: true
+      resources:
+        requests: { cpu: 50m, memory: 64Mi }
+        limits: { cpu: 500m, memory: 256Mi }
+
+    # Ruff, Bandit, pytest - same Python as the app images. Non-root.
+    - name: python
+      image: python:3.12-slim
+      command: ["cat"]
+      tty: true
+      env:
+        - name: HOME
+          value: /tmp
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: [ALL]
+      resources:
+        requests: { cpu: 200m, memory: 256Mi }
+        limits: { cpu: "1", memory: 1Gi }
+
+    # Builds images WITHOUT a Docker daemon and pushes them to Docker Hub.
+    # Kaniko must run as root inside its container (it unpacks image layers),
+    # which is why the "cicd" namespace is "baseline", not "restricted".
+    # It is NOT privileged and has no access to the node.
+    - name: kaniko
+      image: gcr.io/kaniko-project/executor:debug   # "debug" = includes a shell for Jenkins
+      command: ["/busybox/cat"]
+      tty: true
+      resources:
+        requests: { cpu: 500m, memory: 512Mi }
+        limits: { cpu: "2", memory: 2Gi }
+      volumeMounts:
+        - name: docker-config
+          mountPath: /kaniko/.docker
+          readOnly: true
+
+    # Scans the pushed images for known vulnerabilities. Non-root.
+    - name: trivy
+      image: aquasec/trivy:latest       # latest = newest vulnerability rules; pin in production
+      command: ["cat"]
+      tty: true
+      env:
+        - name: HOME
+          value: /tmp
+        - name: TRIVY_CACHE_DIR
+          value: /tmp/trivy-cache
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: [ALL]
+      resources:
+        requests: { cpu: 100m, memory: 256Mi }
+        limits: { cpu: "1", memory: 1Gi }
+
+    # Load test through the Ingress. Non-root (the image's own k6 user).
+    - name: k6
+      image: grafana/k6:latest
+      command: ["cat"]
+      tty: true
+      securityContext:
+        runAsUser: 12345
+        runAsNonRoot: true
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: [ALL]
+      resources:
+        requests: { cpu: 100m, memory: 64Mi }
+        limits: { cpu: "1", memory: 256Mi }
+
+  volumes:
+    # Docker Hub login for Kaniko - the Secret mounted as a FILE:
+    # /kaniko/.docker/config.json (created by scripts/create-secrets.sh)
+    - name: docker-config
+      secret:
+        secretName: dockerhub-push
+        items:
+          - key: .dockerconfigjson
+            path: config.json

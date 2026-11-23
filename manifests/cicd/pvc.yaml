@@ -1,0 +1,25 @@
+# pvc.yaml - Jenkins asks for its disk.
+#
+# A PersistentVolumeClaim is a REQUEST for storage. Kubernetes binds it to a
+# matching PV - here the "jenkins-home" PV from manifests/storage/, found by
+# its label. Jobs, build history and plugins live there and survive pod restarts.
+#
+# ReadWriteOnce: one node mounts it read-write. Jenkins is a single process
+# that must never share its home folder with a second copy of itself.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: jenkins-home
+  namespace: cicd
+  labels:
+    app.kubernetes.io/name: jenkins
+    app.kubernetes.io/part-of: cluster-chronicles
+spec:
+  storageClassName: manual
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi
+  selector:
+    matchLabels:
+      storage.cluster-chronicles/for: jenkins

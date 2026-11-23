@@ -1,0 +1,159 @@
+# statefulset.yaml - the Jenkins controller.
+#
+# StatefulSet (not Deployment): it never runs two copies at once. On an update
+# the old pod is stopped BEFORE the new one starts, so two Jenkins processes
+# can never write to the same home folder.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: jenkins
+  namespace: cicd
+  labels:
+    app.kubernetes.io/name: jenkins
+    app.kubernetes.io/part-of: cluster-chronicles
+spec:
+  serviceName: jenkins
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: jenkins
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: jenkins
+        app.kubernetes.io/part-of: cluster-chronicles
+    spec:
+      serviceAccountName: jenkins          # may start build pods (rbac.yaml)
+      enableServiceLinks: false            # no JENKINS_PORT=... variables from the Service
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        fsGroup: 1000                      # mounted ConfigMap/Secret files get group 1000
+        seccompProfile:
+          type: RuntimeDefault
+
+      # Init containers run one after another, to the end, BEFORE Jenkins starts.
+      initContainers:
+        # 1. The PV folder was created by Kubernetes as root. Jenkins runs as
+        #    UID 1000, so the folder is handed over once. Root, but with ONLY
+        #    the CHOWN capability, and only the top folder (not -R).
+        - name: fix-permissions
+          image: busybox:1.36
+          command: ["sh", "-c", "chown 1000:1000 /var/jenkins_home && echo 'jenkins home owned by 1000'"]
+          securityContext:
+            runAsUser: 0
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+              add: [CHOWN]
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { cpu: 100m, memory: 32Mi }
+          volumeMounts:
+            - name: jenkins-home
+              mountPath: /var/jenkins_home
+
+        # 2. Download the plugins listed in plugins.txt (plus dependencies).
+        #    Jenkins copies them from /usr/share/jenkins/ref/plugins on start.
+        - name: install-plugins
+          image: jenkins/jenkins:lts-jdk21
+          command:
+            - jenkins-plugin-cli
+            - --plugin-file
+            - /var/jenkins_config/plugins.txt
+            - --plugin-download-directory
+            - /var/jenkins_plugins
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: "1", memory: 1Gi }
+          volumeMounts:
+            - name: jenkins-config
+              mountPath: /var/jenkins_config
+              readOnly: true
+            - name: plugins
+              mountPath: /var/jenkins_plugins
+
+      containers:
+        - name: jenkins
+          image: jenkins/jenkins:lts-jdk21
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            # No setup wizard: everything comes from casc.yaml.
+            # Heap = 70% of the memory limit.
+            - name: JAVA_OPTS
+              value: "-Djenkins.install.runSetupWizard=false -XX:MaxRAMPercentage=70"
+            - name: CASC_JENKINS_CONFIG
+              value: /var/jenkins_config/casc.yaml
+            - name: PLUGINS_FORCE_UPGRADE      # newer plugins from the init container replace old ones
+              value: "true"
+            # Secret as an ENVIRONMENT VARIABLE (used by casc.yaml)
+            - name: JENKINS_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: jenkins-secrets
+                  key: JENKINS_ADMIN_PASSWORD
+          resources:
+            requests: { cpu: 500m, memory: 1Gi }
+            limits: { cpu: "2", memory: 2Gi }
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          # The first start downloads and loads plugins: allow up to 10 minutes.
+          startupProbe:
+            httpGet: { path: /login, port: http }
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /login, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet: { path: /login, port: http }
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 5
+          volumeMounts:
+            - name: jenkins-home
+              mountPath: /var/jenkins_home
+            - name: jenkins-config
+              mountPath: /var/jenkins_config
+              readOnly: true
+            - name: plugins
+              mountPath: /usr/share/jenkins/ref/plugins
+            # Secret as FILES: /run/secrets/GITEA_TOKEN etc. (used by casc.yaml)
+            - name: jenkins-secrets
+              mountPath: /run/secrets
+              readOnly: true
+
+      volumes:
+        - name: jenkins-home
+          persistentVolumeClaim:
+            claimName: jenkins-home
+        - name: jenkins-config
+          configMap:
+            name: jenkins-casc
+        - name: plugins
+          emptyDir: {}
+        - name: jenkins-secrets
+          secret:
+            secretName: jenkins-secrets
+            defaultMode: 0440              # owner + group (1000) read, nobody else
+            items:                         # only what casc.yaml reads as files
+              - key: GITEA_USERNAME
+                path: GITEA_USERNAME
+              - key: GITEA_TOKEN
+                path: GITEA_TOKEN
+              - key: SLACK_WEBHOOK_URL
+                path: SLACK_WEBHOOK_URL

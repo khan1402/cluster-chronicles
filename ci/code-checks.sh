@@ -4,40 +4,31 @@
 #   bash ci/code-checks.sh backend
 #   bash ci/code-checks.sh frontend
 #
-# Runs inside a throwaway python:3.12-slim container: the same Python as the
-# app images, and nothing installed on the CI server itself.
-#   - the source code is mounted READ-ONLY (the checks can't change it)
-#   - the container runs as the calling user (no root-owned files left behind)
-#   - test results go to reports/<component>-tests.xml (shown by Jenkins)
+# Runs INSIDE the build pod's "python" container (python:3.12-slim, the same
+# Python as the app images). No Docker needed. Each component gets its own
+# throwaway virtualenv in /tmp, so nothing is installed system-wide.
+# Test results go to reports/<component>-tests.xml (Jenkins "Tests" tab).
 set -euo pipefail
 
 COMPONENT="${1:?usage: code-checks.sh <backend|frontend>}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-mkdir -p "$ROOT/reports"
+REPORTS="$ROOT/reports"
+VENV="/tmp/venv-$COMPONENT"
+export PYTHONDONTWRITEBYTECODE=1
 
-docker run --rm \
-  --user "$(id -u):$(id -g)" \
-  --env HOME=/tmp \
-  --env PYTHONDONTWRITEBYTECODE=1 \
-  --env COMPONENT="$COMPONENT" \
-  --volume "$ROOT/app:/src:ro" \
-  --volume "$ROOT/reports:/reports" \
-  --workdir "/src/$COMPONENT" \
-  python:3.12-slim \
-  bash -euo pipefail -c '
-    python -m venv /tmp/venv
-    . /tmp/venv/bin/activate
-    pip install --quiet --disable-pip-version-check \
-      -r requirements.txt -r ../requirements-dev.txt
+mkdir -p "$REPORTS"
+python -m venv "$VENV"
+cd "$ROOT/app/$COMPONENT"
 
-    echo "=== [$COMPONENT] Ruff - lint ==="
-    ruff check --no-cache --config ../ruff.toml .
+"$VENV/bin/pip" install --quiet --disable-pip-version-check \
+  -r requirements.txt -r ../requirements-dev.txt
 
-    echo "=== [$COMPONENT] Bandit - security scan of the code ==="
-    bandit -q -r . -x ./tests
+echo "=== [$COMPONENT] Ruff - lint ==="
+"$VENV/bin/ruff" check --no-cache --config ../ruff.toml .
 
-    echo "=== [$COMPONENT] pytest - unit tests ==="
-    python -m pytest -q -p no:cacheprovider \
-      --junitxml="/reports/$COMPONENT-tests.xml" tests
-  '
+echo "=== [$COMPONENT] Bandit - security scan of the code ==="
+"$VENV/bin/bandit" -q -r . -x ./tests
 
+echo "=== [$COMPONENT] pytest - unit tests ==="
+"$VENV/bin/python" -m pytest -q -p no:cacheprovider \
+  --junitxml="$REPORTS/$COMPONENT-tests.xml" tests
