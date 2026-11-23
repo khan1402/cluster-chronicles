@@ -92,13 +92,19 @@ spec:
         requests: { cpu: 100m, memory: 256Mi }
         limits: { cpu: "1", memory: 1Gi }
 
-    # Load test through the Ingress. Non-root (the image's own k6 user).
+    # Load test through the Ingress. Non-root, as UID 1000 like the jnlp agent:
+    # Jenkins writes each step's control files into the workspace (owned by
+    # 1000), so every container that runs steps must be able to write there.
     - name: k6
       image: grafana/k6:latest
       command: ["cat"]
       tty: true
+      env:
+        - name: HOME
+          value: /tmp
       securityContext:
-        runAsUser: 12345
+        runAsUser: 1000
+        runAsGroup: 1000
         runAsNonRoot: true
         allowPrivilegeEscalation: false
         capabilities:
