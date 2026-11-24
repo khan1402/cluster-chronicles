@@ -34,14 +34,14 @@ spec:
             description: "CPU usage is {{ $value | printf \"%.0f\" }}% (threshold 80% for 5 minutes)."
 
         - alert: NodeLowDiskSpace
-          expr: 100 * node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} < 20
+          expr: 100 * node_filesystem_avail_bytes{mountpoint="/var"} / node_filesystem_size_bytes{mountpoint="/var"} < 20
           for: 1m
           labels:
             severity: critical
             project: cluster-chronicles
           annotations:
             summary: "Less than 20% disk space left on {{ $labels.instance }}"
-            description: "Only {{ $value | printf \"%.1f\" }}% of the node's root filesystem is free."
+            description: "Only {{ $value | printf \"%.1f\" }}% of the node's disk (/var: images, logs, volumes) is free."
 
         - alert: NodeHighMemory
           expr: 100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 90

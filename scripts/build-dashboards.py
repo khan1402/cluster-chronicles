@@ -143,7 +143,7 @@ def dashboard(uid, title, desc, panels, variables):
 
 RI = "$__rate_interval"
 NET = 'device!~"lo|veth.*|docker.*|br-.*|cni.*"'
-FS = 'mountpoint="/"'
+FS = 'mountpoint="/var"'
 
 # --- 1. Cluster performance --------------------------------------------------------------
 cluster = dashboard(
