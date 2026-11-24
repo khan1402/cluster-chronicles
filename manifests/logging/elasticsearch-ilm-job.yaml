@@ -1,0 +1,97 @@
+# elasticsearch-ilm-job.yaml - one-time setup of Elasticsearch: retention + mappings.
+#
+# Runs ONCE after Elasticsearch is up, BEFORE Fluent Bit sends the first log
+# (an index template only applies to indices created after it exists).
+#
+# 1. ILM policy "k8s-logs": every log index is DELETED when it is 3 days old.
+#    Fluent Bit writes one index per day (k8s-containers-2026.11.24, ...), so at
+#    most ~3 days of logs exist - the disk can't fill up with old logs.
+# 2. Index template for k8s-containers-* and k8s-node-*:
+#    - 1 shard, 1 replica (the replica lives on the other Elasticsearch node)
+#    - attaches the ILM policy to every new index
+#    - text fields are stored as "keyword" (exact values: namespace, pod,
+#      level, path...), which Kibana can count and group directly; only the
+#      raw log line ("log", "MESSAGE") is full-text searchable.
+#
+# Jobs can't be changed in place. To run it again:
+#   kubectl delete job elasticsearch-setup -n logging --ignore-not-found
+#   kubectl apply -f manifests/logging/elasticsearch-ilm-job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: elasticsearch-setup
+  namespace: logging
+  labels:
+    app.kubernetes.io/name: elasticsearch-setup
+    app.kubernetes.io/part-of: cluster-chronicles
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 86400      # the finished Job is cleaned up after 1 day
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: elasticsearch-setup
+        app.kubernetes.io/part-of: cluster-chronicles
+    spec:
+      restartPolicy: OnFailure
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100                 # the curl image's own user
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: setup
+          image: curlimages/curl:8.11.1
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -e
+              ES=http://elasticsearch:9200
+              echo "Waiting for Elasticsearch..."
+              until curl -fs "$ES/_cluster/health?wait_for_status=yellow&timeout=10s" >/dev/null; do sleep 5; done
+
+              echo "== ILM policy k8s-logs: delete indices after 3 days"
+              curl -fsS -X PUT "$ES/_ilm/policy/k8s-logs" -H 'Content-Type: application/json' -d '{
+                "policy": { "phases": {
+                  "hot":    { "actions": {} },
+                  "delete": { "min_age": "3d", "actions": { "delete": {} } }
+                } }
+              }'
+              echo
+
+              echo "== Index template k8s-logs"
+              curl -fsS -X PUT "$ES/_index_template/k8s-logs" -H 'Content-Type: application/json' -d '{
+                "index_patterns": ["k8s-containers-*", "k8s-node-*"],
+                "priority": 200,
+                "template": {
+                  "settings": {
+                    "number_of_shards": 1,
+                    "number_of_replicas": 1,
+                    "index.lifecycle.name": "k8s-logs",
+                    "index.mapping.total_fields.limit": 2000
+                  },
+                  "mappings": {
+                    "dynamic_templates": [
+                      { "strings_as_keyword": {
+                          "match_mapping_type": "string",
+                          "mapping": { "type": "keyword", "ignore_above": 1024 } } }
+                    ],
+                    "properties": {
+                      "@timestamp": { "type": "date" },
+                      "log":        { "type": "text" },
+                      "MESSAGE":    { "type": "text" }
+                    }
+                  }
+                }
+              }'
+              echo
+              echo "Elasticsearch setup done."
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { cpu: 100m, memory: 64Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
