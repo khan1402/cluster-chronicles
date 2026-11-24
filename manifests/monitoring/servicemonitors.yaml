@@ -1,0 +1,30 @@
+# servicemonitors.yaml - tells Prometheus to scrape the app's own metrics.
+#
+# A ServiceMonitor is a custom resource of the Prometheus Operator. It says
+# "scrape every Service with THESE labels in THESE namespaces". The operator
+# turns it into Prometheus configuration; Prometheus then uses Kubernetes
+# service discovery to find the pods behind those Services, by itself.
+#
+# New pod (a restart, an HPA scale-up) -> new target, automatically.
+# Removed pod -> target disappears. Nothing to update by hand.
+#
+# The Prometheus "job" label = the Service name: job="backend" / job="frontend".
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: app
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+spec:
+  namespaceSelector:
+    matchNames: [app]
+  selector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [backend, frontend]
+  endpoints:
+    - port: http          # the Service port named "http" (backend 3000, frontend 80 -> 8080)
+      path: /metrics      # served by prometheus-fastapi-instrumentator in main.py
+      interval: 15s

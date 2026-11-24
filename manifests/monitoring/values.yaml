@@ -1,0 +1,199 @@
+# values.yaml - settings for the kube-prometheus-stack Helm chart.
+#
+# One chart installs the whole monitoring system into the "monitoring" namespace:
+#   Prometheus Operator  - an OPERATOR: watches ServiceMonitor / PrometheusRule
+#                          objects and turns them into Prometheus config
+#   Prometheus           - collects and stores metrics (pull model)
+#   Alertmanager         - groups, throttles and sends alerts to Slack
+#   Grafana              - dashboards
+#   node-exporter        - node metrics (CPU, memory, disk, network), one pod per node
+#   kube-state-metrics   - the state of Kubernetes objects as metrics
+#                          (pod phase, restarts, replicas, limits)
+#
+# Installed / upgraded with (run from the repo root, in WSL):
+#   helm upgrade --install kps prometheus-community/kube-prometheus-stack \
+#     --namespace monitoring -f manifests/monitoring/values.yaml
+#
+# Only the settings that differ from the chart's defaults are listed here.
+
+# Short, predictable names: services "kps-prometheus", "kps-alertmanager".
+fullnameOverride: kps
+
+# --- Minikube limitations -------------------------------------------------------------
+# In Minikube, etcd, the scheduler, the controller manager and kube-proxy only
+# listen on 127.0.0.1 inside the node, so Prometheus can't scrape them. They
+# are switched off here instead of showing up as targets that are always DOWN.
+# (The API server, kubelet, CoreDNS and the node itself ARE scraped.)
+kubeEtcd:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeProxy:
+  enabled: false
+
+# The chart's standard rules: recording rules that the built-in dashboards use,
+# plus ~100 standard alerts. Those standard alerts are NOT sent to Slack (see
+# the Alertmanager route below) - only this project's own alerts are.
+defaultRules:
+  create: true
+  rules:
+    etcd: false
+    kubeControllerManager: false
+    kubeProxy: false
+    kubeSchedulerAlerting: false
+    kubeSchedulerRecording: false
+
+# --- Prometheus ---------------------------------------------------------------------------
+prometheus:
+  prometheusSpec:
+    # Service discovery: pick up ServiceMonitors, PodMonitors and PrometheusRules
+    # from EVERY namespace, not only the ones created by this Helm release.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+    scrapeConfigSelectorNilUsesHelmValues: false
+
+    scrapeInterval: 15s
+    evaluationInterval: 15s
+
+    # Retention: old data is deleted when EITHER limit is reached first.
+    # Small on purpose - the whole VM has a 40 GB disk.
+    retention: 3d
+    retentionSize: 3GB
+
+    resources:
+      requests: { cpu: 200m, memory: 512Mi }
+      limits: { cpu: "1", memory: 2Gi }
+
+    # Data on the "prometheus-data" PV from manifests/storage/.
+    # disableMountSubPath: mount the whole PV at /prometheus (not a "prometheus-db"
+    # subfolder, which Kubernetes would create root-owned) - so the folder the
+    # init container hands over is exactly the folder Prometheus writes to.
+    storageSpec:
+      disableMountSubPath: true
+      volumeClaimTemplate:
+        spec:
+          storageClassName: manual
+          volumeName: prometheus-data
+          accessModes: [ReadWriteOnce]
+          resources:
+            requests:
+              storage: 5Gi
+
+    # The PV folder is created root-owned; Prometheus runs as UID 1000 / GID 2000.
+    # Init container: hand the folder over once (root, CHOWN capability only).
+    initContainers:
+      - name: fix-permissions
+        image: busybox:1.36
+        command: ["sh", "-c", "chown 1000:2000 /prometheus && echo 'prometheus data owned by 1000:2000'"]
+        securityContext:
+          runAsUser: 0
+          runAsNonRoot: false
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
+            add: [CHOWN]
+        resources:
+          requests: { cpu: 10m, memory: 16Mi }
+          limits: { cpu: 100m, memory: 32Mi }
+        volumeMounts:
+          - name: prometheus-kps-prometheus-db
+            mountPath: /prometheus
+
+# --- Alertmanager -------------------------------------------------------------------------
+alertmanager:
+  alertmanagerSpec:
+    # The Slack webhook comes from the "alertmanager-slack" Secret, mounted as a
+    # FILE at /etc/alertmanager/secrets/alertmanager-slack/url - never in Git.
+    secrets: [alertmanager-slack]
+    resources:
+      requests: { cpu: 10m, memory: 64Mi }
+      limits: { cpu: 200m, memory: 256Mi }
+
+  config:
+    global:
+      resolve_timeout: 5m
+      slack_api_url_file: /etc/alertmanager/secrets/alertmanager-slack/url
+
+    # Routing tree: every alert enters at the top.
+    #   - this project's alerts (label project="cluster-chronicles") -> Slack
+    #   - everything else (the chart's ~100 standard alerts) -> "null" (dropped)
+    #
+    # Against alert fatigue:
+    #   group_by        one Slack message per alert type and object
+    #   group_wait      wait 30 s for related alerts before the first message
+    #   group_interval  new alerts joining a group are sent at most every 5 min
+    #   repeat_interval a still-firing alert is repeated only every 4 h
+    route:
+      receiver: "null"
+      group_by: [alertname, namespace, pod, instance]
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+      routes:
+        - receiver: slack
+          matchers:
+            - project = "cluster-chronicles"
+
+    receivers:
+      - name: "null"
+      - name: slack
+        slack_configs:
+          - send_resolved: true          # a second message when the problem is gone
+            title: >-
+              [{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}]
+              {{ .CommonLabels.alertname }} ({{ .CommonLabels.severity }})
+            text: |-
+              {{ range .Alerts }}*{{ .Annotations.summary }}*
+              {{ .Annotations.description }}
+              {{ end }}
+
+# --- Grafana ------------------------------------------------------------------------------
+grafana:
+  fullnameOverride: grafana                # service "grafana"
+
+  # Admin login from the "grafana-admin" Secret (scripts/create-secrets.sh)
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+
+  # Data (users, settings) on the "grafana-data" PV from manifests/storage/
+  persistence:
+    enabled: true
+    type: pvc
+    storageClassName: manual
+    volumeName: grafana-data
+    accessModes: [ReadWriteOnce]
+    size: 1Gi
+  # The chart's init container hands the PV folder to Grafana's user (UID 472).
+  initChownData:
+    enabled: true
+
+  # One Grafana at a time on its disk: stop the old pod before starting the new one.
+  deploymentStrategy:
+    type: Recreate
+
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+  # Dashboards as code: the sidecar loads every ConfigMap labelled
+  # grafana_dashboard="1" (any namespace) into the folder named in its
+  # grafana_folder annotation (manifests/monitoring/dashboards/).
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      searchNamespace: ALL
+      folderAnnotation: grafana_folder
+      provider:
+        foldersFromFilesStructure: true
+
+  grafana.ini:
+    server:
+      root_url: http://grafana.192.168.0.122.nip.io/

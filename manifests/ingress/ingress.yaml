@@ -2,14 +2,21 @@
 #
 # Browser -> VM port 80 -> ingress-nginx controller -> Service -> pod
 #
-#   http://192.168.0.122/                     the app (no hostname = default rule)
-#   http://jenkins.192.168.0.122.nip.io/      Jenkins
+#   http://192.168.0.122/                        the app (no hostname = default rule)
+#   http://jenkins.192.168.0.122.nip.io/         Jenkins
+#   http://grafana.192.168.0.122.nip.io/         Grafana
+#   http://prometheus.192.168.0.122.nip.io/      Prometheus (targets, alerts)
+#   http://alertmanager.192.168.0.122.nip.io/    Alertmanager (active alerts, silences)
+#   http://kibana.192.168.0.122.nip.io/          Kibana (Part B - answers 503 until Kibana runs)
 #
 # nip.io is a public DNS service: <anything>.192.168.0.122.nip.io resolves to
 # 192.168.0.122, so no hosts file needs editing.
 #
 # An Ingress can only point to Services in its OWN namespace, so each part of
 # the system gets its own Ingress object below, in its own namespace.
+#
+# Prometheus and Alertmanager have no login of their own. They are reachable
+# only from the home network (192.168.0.x), never from the internet.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -52,3 +59,66 @@ spec:
                 name: jenkins
                 port:
                   name: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: monitoring
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: grafana.192.168.0.122.nip.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: grafana
+                port:
+                  number: 80
+    - host: prometheus.192.168.0.122.nip.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kps-prometheus
+                port:
+                  number: 9090
+    - host: alertmanager.192.168.0.122.nip.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kps-alertmanager
+                port:
+                  number: 9093
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kibana
+  namespace: logging
+  labels:
+    app.kubernetes.io/name: kibana
+    app.kubernetes.io/part-of: cluster-chronicles
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: kibana.192.168.0.122.nip.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kibana
+                port:
+                  number: 5601

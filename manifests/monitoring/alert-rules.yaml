@@ -1,0 +1,150 @@
+# alert-rules.yaml - this project's 10 alert rules (PrometheusRule).
+#
+# Prometheus evaluates every rule every 15 s:
+#   expr true            -> the alert is PENDING
+#   still true after for -> FIRING, sent to Alertmanager
+#   expr false again     -> RESOLVED (Alertmanager sends a "resolved" message)
+#
+# Every rule has:
+#   project: cluster-chronicles - Alertmanager routes ONLY these to Slack
+#   severity                    - warning or critical, shown in the Slack title
+#
+# Demo mode (scripts/demo/demo-mode.sh) re-applies this file with every
+# "for: 5m" shortened to "for: 1m". Thresholds stay the same.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cluster-chronicles-alerts
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+spec:
+  groups:
+    # ===== Node =====
+    - name: node
+      rules:
+        - alert: NodeHighCPU
+          expr: 100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[2m]))) > 80
+          for: 5m
+          labels:
+            severity: warning
+            project: cluster-chronicles
+          annotations:
+            summary: "Node CPU above 80% on {{ $labels.instance }}"
+            description: "CPU usage is {{ $value | printf \"%.0f\" }}% (threshold 80% for 5 minutes)."
+
+        - alert: NodeLowDiskSpace
+          expr: 100 * node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} < 20
+          for: 1m
+          labels:
+            severity: critical
+            project: cluster-chronicles
+          annotations:
+            summary: "Less than 20% disk space left on {{ $labels.instance }}"
+            description: "Only {{ $value | printf \"%.1f\" }}% of the node's root filesystem is free."
+
+        - alert: NodeHighMemory
+          expr: 100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 90
+          for: 5m
+          labels:
+            severity: warning
+            project: cluster-chronicles
+          annotations:
+            summary: "Node memory above 90% on {{ $labels.instance }}"
+            description: "Memory usage is {{ $value | printf \"%.0f\" }}% (threshold 90% for 5 minutes)."
+
+    # ===== Pods and containers =====
+    - name: pods
+      rules:
+        # kube-state-metrics counts every container restart.
+        - alert: PodFrequentRestarts
+          expr: increase(kube_pod_container_status_restarts_total[15m]) > 3
+          for: 0m
+          labels:
+            severity: warning
+            project: cluster-chronicles
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }} keeps restarting"
+            description: "Container {{ $labels.container }} restarted about {{ $value | printf \"%.1f\" }} times in the last 15 minutes (more than 3 fires the alert)." 
+
+        # Working set (cAdvisor, via the kubelet) divided by the container's own limit
+        # (kube-state-metrics). Containers without a limit are not compared.
+        # Not Elasticsearch: Java reserves its whole heap at start, so it always
+        # sits near its limit by design - its health has its own alert below.
+        - alert: ContainerMemoryNearLimit
+          expr: |
+            100 * max by (namespace, pod, container) (container_memory_working_set_bytes{container!="", container!="POD", container!="elasticsearch"})
+              / max by (namespace, pod, container) (kube_pod_container_resource_limits{resource="memory"})
+              > 80
+          for: 1m
+          labels:
+            severity: warning
+            project: cluster-chronicles
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }} is near its memory limit"
+            description: "Container {{ $labels.container }} uses {{ $value | printf \"%.0f\" }}% of its memory limit (threshold 80%). Above 100% it is OOM-killed."
+
+        - alert: PodPendingTooLong
+          expr: max by (namespace, pod) (kube_pod_status_phase{phase="Pending"}) == 1
+          for: 5m
+          labels:
+            severity: warning
+            project: cluster-chronicles
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }} is stuck in Pending"
+            description: "The pod has been Pending for more than 5 minutes - usually not enough CPU or memory on any node. Check: kubectl describe pod {{ $labels.pod }} -n {{ $labels.namespace }}"
+
+    # ===== Cluster =====
+    - name: cluster
+      rules:
+        # absent(... == 1): fires when no API server target is UP - also when
+        # the target has disappeared completely.
+        - alert: KubeAPIServerDown
+          expr: absent(up{job="apiserver"} == 1)
+          for: 1m
+          labels:
+            severity: critical
+            project: cluster-chronicles
+          annotations:
+            summary: "Kubernetes API server is unreachable"
+            description: "Prometheus could not scrape the API server for 1 minute. kubectl, deployments and controllers stop working."
+
+    # ===== Monitoring and logging system (data arrives in Part B) =====
+    - name: logging
+      rules:
+        # From the Elasticsearch exporter: status is 1 for the CURRENT colour.
+        - alert: ElasticsearchClusterNotGreen
+          expr: max(elasticsearch_cluster_health_status{color="green"}) == 0
+          for: 1m
+          labels:
+            severity: critical
+            project: cluster-chronicles
+          annotations:
+            summary: "Elasticsearch cluster is not green"
+            description: "The cluster is yellow or red: at least one index copy has no node. Check: kubectl get pods -n logging"
+
+        # Fluent Bit's own metrics: failed or retried deliveries to Elasticsearch.
+        - alert: FluentBitOutputErrors
+          expr: |
+            sum by (pod) (rate(fluentbit_output_errors_total[2m]))
+              + sum by (pod) (rate(fluentbit_output_retries_total[2m]))
+              > 0
+          for: 1m
+          labels:
+            severity: critical
+            project: cluster-chronicles
+          annotations:
+            summary: "Fluent Bit can't deliver logs ({{ $labels.pod }})"
+            description: "Fluent Bit is failing or retrying deliveries to Elasticsearch. Check: kubectl logs -n logging {{ $labels.pod }}"
+
+        # A wrong log path gives no error at all - Fluent Bit just finds no files.
+        # This rule catches that: no log lines read for 5 minutes.
+        - alert: FluentBitNoLogsCollected
+          expr: sum by (pod) (rate(fluentbit_input_records_total[5m])) == 0
+          for: 5m
+          labels:
+            severity: warning
+            project: cluster-chronicles
+          annotations:
+            summary: "Fluent Bit is not collecting any logs ({{ $labels.pod }})"
+            description: "No log lines were read for 5 minutes - usually a wrong input path or a missing mount."
