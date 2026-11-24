@@ -123,19 +123,26 @@ spec:
             summary: "Elasticsearch cluster is not green"
             description: "The cluster is yellow or red: at least one index copy has no node. Check: kubectl get pods -n logging"
 
-        # Fluent Bit's own metrics: failed or retried deliveries to Elasticsearch.
+                # Fluent Bit's own metrics. Fires on a REAL delivery problem:
+        #   - any error or given-up retry (log lines lost or rejected), or
+        #   - more than 5 retries in 5 minutes (Elasticsearch unreachable).
+        # One or two retries that succeed (a short DNS or network blip) are
+        # normal and don't fire it - no log line is lost in that case.
         - alert: FluentBitOutputErrors
           expr: |
-            sum by (pod) (rate(fluentbit_output_errors_total[2m]))
-              + sum by (pod) (rate(fluentbit_output_retries_total[2m]))
-              > 0
-          for: 1m
+            (
+              sum by (pod) (increase(fluentbit_output_errors_total[5m]))
+                + sum by (pod) (increase(fluentbit_output_retries_failed_total[5m]))
+            ) > 0
+            or
+            sum by (pod) (increase(fluentbit_output_retries_total[5m])) > 5
+          for: 2m
           labels:
             severity: critical
             project: cluster-chronicles
           annotations:
             summary: "Fluent Bit can't deliver logs ({{ $labels.pod }})"
-            description: "Fluent Bit is failing or retrying deliveries to Elasticsearch. Check: kubectl logs -n logging {{ $labels.pod }}"
+            description: "Fluent Bit keeps failing or retrying deliveries to Elasticsearch. Check: kubectl logs -n logging {{ $labels.pod }}"
 
         # A wrong log path gives no error at all - Fluent Bit just finds no files.
         # This rule catches that: no log lines read for 5 minutes.
