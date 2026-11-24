@@ -1,0 +1,115 @@
+# app.yaml - network policies for the app namespace (frontend + backend).
+#
+# Step 1: deny ALL traffic in and out of every pod (default deny).
+# Step 2: open only the paths the app really uses:
+#
+#   ingress-nginx      -> frontend :8080   users, Jenkins smoke test, k6
+#   frontend           -> backend  :3000   the /api/metrics call
+#   Prometheus         -> frontend :8080, backend :3000   /metrics scrape
+#   every pod          -> DNS :53          to find "backend" by name
+#   node 192.168.49.2  -> every pod        kubelet liveness/readiness probes
+#
+# Everything else is dropped: a pod in another namespace can't call the
+# backend directly, and the app pods can't reach the internet or Elasticsearch.
+#
+# NetworkPolicies are allow-lists and they add up: a packet passes if ANY
+# policy that selects the pod allows it.
+
+# --- 1. Default deny: no policy below = no traffic ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: app
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+spec:
+  podSelector: {}               # every pod in the namespace
+  policyTypes: [Ingress, Egress]
+---
+# --- 2. DNS for every pod (CoreDNS in kube-system) ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: app
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+---
+# --- 3. Kubelet probes come from the node's own IP ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kubelet-probes
+  namespace: app
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: 192.168.49.2/32   # the Minikube node
+---
+# --- 4. Frontend: in from ingress-nginx and Prometheus, out to the backend ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend
+  namespace: app
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: frontend
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - {protocol: TCP, port: 8080}
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: backend
+      ports:
+        - {protocol: TCP, port: 3000}
+---
+# --- 5. Backend: in only from the frontend and Prometheus ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backend
+  namespace: app
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: backend
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: frontend
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - {protocol: TCP, port: 3000}

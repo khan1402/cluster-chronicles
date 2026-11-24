@@ -1,0 +1,78 @@
+# cicd.yaml - network policies for the cicd namespace (Jenkins + build pods).
+#
+# IN (locked down):
+#   ingress-nginx      -> Jenkins :8080   (the web UI)
+#   cicd pods          -> cicd pods       (build agents connect to Jenkins
+#                                          over WebSocket on 8080)
+#   node 192.168.49.2  -> every pod       (kubelet probes)
+#   Nothing else can reach Jenkins or a build pod.
+#
+# OUT (left open on purpose): a pipeline must reach many outside places -
+# Gitea (git clone), Docker Hub (Kaniko push), the Trivy database, Slack,
+# the Jenkins plugin site, the Kubernetes API and ingress-nginx (smoke test,
+# k6). Their IP addresses change, and a NetworkPolicy can only filter by IP,
+# not by hostname, so egress is not restricted here.
+
+# --- 1. Default deny incoming ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: cicd
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+# --- 2. Pods in cicd may talk to each other (agents -> Jenkins) ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+  namespace: cicd
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {}
+---
+# --- 3. Kubelet probes ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kubelet-probes
+  namespace: cicd
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: 192.168.49.2/32
+---
+# --- 4. Jenkins web UI through ingress-nginx ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: jenkins-from-ingress
+  namespace: cicd
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: jenkins
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - {protocol: TCP, port: 8080}

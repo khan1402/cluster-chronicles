@@ -1,0 +1,221 @@
+# logging.yaml - network policies for the logging namespace (EFK).
+#
+# Elasticsearch has no password in this project (security switched off to keep
+# the lab small), so these policies are its protection: only the pods that
+# need it can reach port 9200.
+#
+#   Fluent Bit, Kibana, exporter, setup Job -> Elasticsearch :9200
+#   elasticsearch-0 <-> elasticsearch-1     :9300  (cluster traffic, replicas)
+#   Fluent Bit         -> Kubernetes API     (pod names and labels for each log)
+#   ingress-nginx      -> Kibana :5601       (the Kibana web UI)
+#   import Job         -> Kibana :5601       (loads the saved dashboards)
+#   Prometheus         -> Fluent Bit :2020, exporter :9114  (metrics)
+#   every pod          -> DNS :53
+#   node 192.168.49.2  -> every pod          (kubelet probes)
+#
+# Everything else is dropped, including the internet: log data can't leave
+# the cluster.
+
+# --- 1. Default deny ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: logging
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# --- 2. DNS for every pod ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: logging
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+---
+# --- 3. Kubelet probes ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kubelet-probes
+  namespace: logging
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: 192.168.49.2/32
+---
+# --- 4. Elasticsearch: 9200 from its clients, 9300 between its own nodes ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: elasticsearch
+  namespace: logging
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: elasticsearch
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [fluent-bit, kibana, elasticsearch-exporter, elasticsearch-setup, elasticsearch]
+      ports:
+        - {protocol: TCP, port: 9200}
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: elasticsearch
+      ports:
+        - {protocol: TCP, port: 9300}
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: elasticsearch
+      ports:
+        - {protocol: TCP, port: 9200}
+        - {protocol: TCP, port: 9300}
+---
+# --- 5. The clients may talk to Elasticsearch ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: elasticsearch-clients
+  namespace: logging
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [fluent-bit, kibana, elasticsearch-exporter, elasticsearch-setup]
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: elasticsearch
+      ports:
+        - {protocol: TCP, port: 9200}
+---
+# --- 6. Fluent Bit: Kubernetes API out, metrics in ---
+# The API is the Service 10.96.0.1:443, which really goes to the node on 8443.
+# Both are listed, so it works whichever address the policy engine checks.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fluent-bit
+  namespace: logging
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: fluent-bit
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - {protocol: TCP, port: 2020}
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.96.0.1/32
+      ports:
+        - {protocol: TCP, port: 443}
+    - to:
+        - ipBlock:
+            cidr: 192.168.49.2/32
+      ports:
+        - {protocol: TCP, port: 8443}
+---
+# --- 7. Kibana: web UI from ingress-nginx and the import Job ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kibana
+  namespace: logging
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: kibana
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: kibana-dashboards-import
+      ports:
+        - {protocol: TCP, port: 5601}
+---
+# --- 8. Import Job -> Kibana ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kibana-dashboards-import
+  namespace: logging
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: kibana-dashboards-import
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: kibana
+      ports:
+        - {protocol: TCP, port: 5601}
+---
+# --- 9. Exporter: metrics in from Prometheus ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: elasticsearch-exporter
+  namespace: logging
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: elasticsearch-exporter
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - {protocol: TCP, port: 9114}

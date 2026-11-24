@@ -1,0 +1,80 @@
+# monitoring.yaml - network policies for the monitoring namespace
+# (Prometheus, Alertmanager, Grafana, kube-state-metrics, the operator).
+#
+# IN (locked down):
+#   ingress-nginx      -> Grafana :3000, Prometheus :9090, Alertmanager :9093
+#   monitoring pods    -> monitoring pods  (Grafana -> Prometheus,
+#                                           Prometheus -> Alertmanager, scrapes)
+#   node 192.168.49.2  -> every pod  (kubelet probes, and the API server
+#                                     calling the operator's admission webhook)
+#
+# OUT (left open on purpose): Prometheus scrapes every namespace, the kubelet
+# and the node; Alertmanager posts to Slack on the internet; the operator and
+# Grafana's sidecar read the Kubernetes API.
+#
+# node-exporter uses the node's own network (hostNetwork), so policies don't
+# apply to it.
+
+# --- 1. Default deny incoming ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+# --- 2. Monitoring pods may talk to each other ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {}
+---
+# --- 3. The node: kubelet probes + operator webhook ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-node
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: 192.168.49.2/32
+---
+# --- 4. The web UIs through ingress-nginx ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: web-from-ingress
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: cluster-chronicles
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - {protocol: TCP, port: 3000}   # Grafana
+        - {protocol: TCP, port: 9090}   # Prometheus
+        - {protocol: TCP, port: 9093}   # Alertmanager
