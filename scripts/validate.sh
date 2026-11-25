@@ -109,6 +109,10 @@ for a in NodeHighCPU NodeLowDiskSpace NodeHighMemory PodFrequentRestarts Contain
   grep -q "\"name\":\"$a\"" <<<"$rules" || missing="$missing $a"
 done
 expect "all 10 project alert rules loaded${missing:+ (missing:$missing)}" test -z "$missing"
+want5="$(grep -cE '^[[:space:]]+for: 5m' manifests/monitoring/alert-rules.yaml)"
+have5="$(kubectl get prometheusrule cluster-chronicles-alerts -n monitoring \
+  -o jsonpath='{range .spec.groups[*].rules[*]}{.for}{"\n"}{end}' 2>/dev/null | grep -c '^5m$')"
+expect "demo mode is off (real 5-minute alert windows)" test "$want5" -eq "$have5"
 expect "Alertmanager answers" http_ok "$ALERTMANAGER/-/healthy"
 expect "Grafana answers"      http_ok "$GRAFANA/api/health"
 for d in cluster-performance pods-containers app-performance; do
