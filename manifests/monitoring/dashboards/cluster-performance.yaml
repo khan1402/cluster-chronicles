@@ -221,8 +221,8 @@ data:
         },
         {
           "type": "bargauge",
-          "title": "Disk space used (/)",
-          "description": "Root filesystem of the node. Alert: less than 20% free (above 80% used).",
+          "title": "Disk space used (/var)",
+          "description": "The node disk (/var: images, logs, volumes). Alert: less than 20% free (above 80% used).",
           "datasource": {"type": "prometheus", "uid": "prometheus"},
           "gridPos": {"x": 0, "y": 14, "w": 12, "h": 8},
           "fieldConfig": {
