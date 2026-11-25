@@ -8,7 +8,7 @@
 set -euo pipefail
 
 MINIKUBE_CPUS=14          # the VM has 16; 2 stay free for the VM itself
-MINIKUBE_MEMORY=40g       # the VM has 48 GB; 8 GB stay free for the VM itself
+MINIKUBE_MEMORY=124g      # the VM has 128 GB; 4 GB stay free for the VM itself
 ADDONS=ingress,metrics-server
 
 # The VM's own address on the home network (source IP of its default route).

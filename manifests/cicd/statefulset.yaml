@@ -52,16 +52,31 @@ spec:
             - name: jenkins-home
               mountPath: /var/jenkins_home
 
-        # 2. Download the plugins listed in plugins.txt (plus dependencies).
-        #    Jenkins copies them from /usr/share/jenkins/ref/plugins on start.
+        # 2. Plugins from plugins.txt (plus dependencies), CACHED on the Jenkins
+        #    disk: they are downloaded only when plugins.txt changes (checksum),
+        #    so a normal restart needs no internet. Jenkins copies them from
+        #    /usr/share/jenkins/ref/plugins on start.
         - name: install-plugins
           image: jenkins/jenkins:lts-jdk21
           command:
-            - jenkins-plugin-cli
-            - --plugin-file
-            - /var/jenkins_config/plugins.txt
-            - --plugin-download-directory
-            - /var/jenkins_plugins
+            - bash
+            - -c
+            - |
+              set -euo pipefail
+              CACHE=/var/jenkins_home/plugin-cache
+              SUM="$(sha256sum /var/jenkins_config/plugins.txt | cut -d' ' -f1)"
+              if [ -f "$CACHE/.sum" ] && [ "$(cat "$CACHE/.sum")" = "$SUM" ]; then
+                echo "plugins.txt unchanged - using the cached plugins"
+              else
+                echo "plugins.txt changed or no cache - downloading"
+                rm -rf "$CACHE.new" && mkdir -p "$CACHE.new"
+                jenkins-plugin-cli --plugin-file /var/jenkins_config/plugins.txt \
+                  --plugin-download-directory "$CACHE.new"
+                echo "$SUM" > "$CACHE.new/.sum"
+                rm -rf "$CACHE" && mv "$CACHE.new" "$CACHE"
+              fi
+              find "$CACHE" -maxdepth 1 \( -name '*.jpi' -o -name '*.hpi' \) -exec cp {} /var/jenkins_plugins/ \;
+              echo "$(ls /var/jenkins_plugins | wc -l) plugins ready"
           securityContext:
             runAsUser: 1000
             runAsGroup: 1000
@@ -78,6 +93,8 @@ spec:
               readOnly: true
             - name: plugins
               mountPath: /var/jenkins_plugins
+            - name: jenkins-home
+              mountPath: /var/jenkins_home
 
       containers:
         - name: jenkins
