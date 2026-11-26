@@ -126,7 +126,7 @@ kept only on the laptop (`~/.kube/config`, never in Git):
 
 ```bash
 mkdir -p ~/.kube
-ssh minikube-vm "kubectl config view --raw --minify --flatten" > ~/.kube/config
+ssh minikube-vm "minikube update-context >/dev/null 2>&1; kubectl config view --raw --minify --flatten" > ~/.kube/config
 sed -i 's#server: https://.*#server: https://192.168.0.122:8443#' ~/.kube/config
 chmod 600 ~/.kube/config
 kubectl get nodes        # minikube   Ready
