@@ -1,9 +1,12 @@
 # cluster chronicles 📜
 
-The sherlock-logs system (Project 4) moved from separate VMs to **Kubernetes**.
-The same FastAPI app, CI/CD pipeline and monitoring goals now run as pods in
-one Minikube cluster: the app, Jenkins, Prometheus + Grafana + Alertmanager,
-and the EFK logging stack (Elasticsearch, Fluent Bit, Kibana).
+A complete Kubernetes platform for a two-part web application (FastAPI
+frontend and backend), running on a Minikube cluster. Everything the
+application needs runs inside the cluster as pods: the app itself with load
+balancing and autoscaling, a Jenkins CI/CD pipeline that builds, scans and
+deploys every commit, monitoring and alerting with Prometheus, Grafana and
+Alertmanager, and centralised logging with the EFK stack (Elasticsearch,
+Fluent Bit, Kibana).
 
 Everything is declarative and lives in this repository: manifests, Helm values,
 dashboards, alert rules, network policies and scripts. One command installs it

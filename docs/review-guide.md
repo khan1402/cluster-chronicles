@@ -52,8 +52,9 @@ Drawbacks:
 - stateful systems (databases, Elasticsearch) need extra care
 - overkill for one small app on one server
 
-In this project: 6-7 VMs from Project 4 became one VM with pods; the nginx load
-balancer became an Ingress; Ansible deploys became `kubectl set image`.
+In this project: one VM runs all parts as pods instead of one VM per role, an
+Ingress replaces a separate load-balancer VM, and `kubectl set image` replaces
+deploy scripts run on each server.
 
 ## 3. Namespaces
 
@@ -260,8 +261,8 @@ Show: `kubectl get sts,pod,pvc -n cicd` and http://jenkins.192.168.0.122.nip.io/
 
 ## 21. Why Jenkins
 
-- continues the pipeline from earlier projects (Jenkinsfile, Trivy, Slack,
-  rollback) - only the deploy step changed
+- pipeline as code: one Jenkinsfile holds every stage (code checks, Kaniko,
+  Trivy, deploy, smoke test, k6, rollback, Slack)
 - the Kubernetes plugin starts a fresh build pod for every build and removes it
 - fully configured as code (JCasC + Job DSL), so it rebuilds from Git
 - widely used in Finnish companies; free and self-hosted (no external CI needed

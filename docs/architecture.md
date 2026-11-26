@@ -277,9 +277,9 @@ Installed with Helm: **kube-prometheus-stack** (release `kps`, values in
   Jenkins, or the node stops responding (seen with 48 GB / 40 GB).
 - **hostPath PVs** - simplest persistent storage on one node. In production:
   a CSI driver (Ceph, Longhorn, cloud disks) with dynamic provisioning.
-- **Jenkins** - continues the pipeline from earlier projects (Jenkinsfile,
-  Slack, Trivy, rollback); the Kubernetes plugin gives a fresh build pod per
-  build.
+- **Jenkins** - mature, self-hosted, pipeline as code (Jenkinsfile with
+  Trivy, rollback and Slack); the Kubernetes plugin gives a fresh build pod
+  per build.
 - **Polling instead of a webhook** - Gitea is on the internet, Jenkins is on a
   home network without a public address, so Gitea can't call Jenkins.
 - **Kaniko instead of Docker-in-Docker** - no privileged pod, no Docker socket.

@@ -205,4 +205,3 @@ counts only indented rule lines.
 Slack); `validate.sh` 53 passed, 0 failed.
 
 ---
-
